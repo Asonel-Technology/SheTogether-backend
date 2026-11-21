@@ -1,0 +1,809 @@
+// She Together — Neon PostgreSQL schema (Prisma 6)
+// Pooled connection (DATABASE_URL) for app traffic, direct connection (DIRECT_URL) for migrations.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [vector, pg_trgm]
+}
+
+// ───────────────────────── Enums ─────────────────────────
+
+enum Role {
+  USER
+  PROFESSIONAL
+  MODERATOR
+  CONTENT_REVIEWER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+  PENDING_DELETION
+}
+
+enum AgeBand {
+  AGE_10_12
+  AGE_13_15
+  AGE_16_17
+  AGE_18_24
+  AGE_25_35
+}
+
+enum Language {
+  en
+  rw
+  sw
+  fr
+  ar
+}
+
+enum ContentStatus {
+  DRAFT
+  IN_REVIEW
+  REJECTED
+  PUBLISHED
+  ARCHIVED
+}
+
+enum ChannelType {
+  OFFICIAL
+  PROFESSIONAL
+  ORGANIZATION
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum PostStatus {
+  PENDING_REVIEW
+  PUBLISHED
+  REJECTED
+  HIDDEN
+  REMOVED
+}
+
+enum TargetType {
+  COMMUNITY_POST
+  COMMENT
+  CHANNEL_POST
+  USER
+}
+
+enum ReportReason {
+  MISINFORMATION
+  HARASSMENT
+  UNSAFE_ADVICE
+  INAPPROPRIATE
+  SPAM
+  OTHER
+}
+
+enum ReportStatus {
+  OPEN
+  ESCALATED
+  RESOLVED
+  DISMISSED
+}
+
+enum ModerationActionType {
+  HIDE
+  REMOVE
+  RESTORE
+  WARN
+  SUSPEND
+  UNSUSPEND
+  BAN
+  ESCALATE
+  DISMISS
+}
+
+enum ReactionType {
+  LIKE
+  SUPPORT
+  HELPFUL
+}
+
+enum MediaPurpose {
+  ARTICLE_IMAGE
+  AUDIO
+  CHANNEL_POST
+  COMMUNITY
+  ADVERTISEMENT
+}
+
+enum MediaStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum ServiceType {
+  HOSPITAL
+  HEALTH_CENTER
+  CLINIC
+  YOUTH_FRIENDLY
+  GBV_SUPPORT
+  HOTLINE
+  COUNSELING
+  LEGAL_AID
+  EMERGENCY
+  OTHER
+}
+
+enum AnalyticsEventType {
+  SESSION_START
+  CONTENT_VIEW
+  CATEGORY_VIEW
+  SEARCH
+  CHANNEL_VIEW
+  CHATBOT_USED
+  CONTENT_SAVED
+  OFFLINE_SYNC
+  ACCESSIBILITY_FEATURE
+  REFERRAL_VIEW
+  USSD_VIEW
+}
+
+enum SafetyLevel {
+  NONE
+  SENSITIVE
+  URGENT
+}
+
+enum ChatRole {
+  USER
+  ASSISTANT
+}
+
+enum FeedbackRating {
+  HELPFUL
+  NOT_HELPFUL
+}
+
+enum FeedbackReason {
+  INACCURATE
+  NOT_RELEVANT
+  UNSAFE
+  UNCLEAR
+  OTHER
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+  WAIVED
+}
+
+enum AdSlot {
+  HOME_BANNER
+  LIBRARY_INLINE
+  CHANNEL_LIST
+}
+
+enum OtpPurpose {
+  VERIFY_EMAIL
+  VERIFY_PHONE
+  RESET_PASSWORD
+}
+
+// ───────────────────────── Users & auth ─────────────────────────
+
+model User {
+  id                  String     @id @default(uuid(7))
+  email               String?    @unique
+  phone               String?    @unique
+  passwordHash        String
+  username            String     @unique
+  ageBand             AgeBand
+  preferredLanguage   Language   @default(en)
+  role                Role       @default(USER)
+  status              UserStatus @default(ACTIVE)
+  suspendedUntil      DateTime?
+  emailVerifiedAt     DateTime?
+  phoneVerifiedAt     DateTime?
+  tokenVersion        Int        @default(0)
+  failedLoginCount    Int        @default(0)
+  lockedUntil         DateTime?
+  termsVersion        String
+  termsAcceptedAt     DateTime
+  deletionRequestedAt DateTime?
+  lastLoginAt         DateTime?
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  preferences   UserPreference?
+  refreshTokens RefreshToken[]
+  otpCodes      OtpCode[]
+  blocks        UserBlock[]       @relation("Blocker")
+  blockedBy     UserBlock[]       @relation("Blocked")
+  saved         SavedArticle[]
+  posts         CommunityPost[]
+  comments      Comment[]
+  channelsOwned Channel[]
+  follows       ChannelFollow[]
+  applications  ProfessionalApplication[]
+  media         MediaAsset[]
+  chatSessions  ChatSession[]
+
+  @@index([role])
+  @@index([status])
+  @@index([createdAt])
+  @@map("users")
+}
+
+model UserPreference {
+  userId                 String  @id
+  fontScale              Int     @default(100)
+  highContrast           Boolean @default(false)
+  reduceMotion           Boolean @default(false)
+  ttsEnabled             Boolean @default(false)
+  lowDataMode            Boolean @default(false)
+  screenReaderOptimized  Boolean @default(false)
+  user                   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_preferences")
+}
+
+model RefreshToken {
+  id           String    @id @default(uuid(7))
+  userId       String
+  tokenHash    String    @unique
+  family       String
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById String?
+  createdAt    DateTime  @default(now())
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([family])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model OtpCode {
+  id         String     @id @default(uuid(7))
+  userId     String
+  purpose    OtpPurpose
+  codeHash   String
+  attempts   Int        @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime   @default(now())
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose, createdAt])
+  @@index([expiresAt])
+  @@map("otp_codes")
+}
+
+model UserBlock {
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+  blocker   User     @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked   User     @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@id([blockerId, blockedId])
+  @@index([blockedId])
+  @@map("user_blocks")
+}
+
+model ProfessionalApplication {
+  id               String            @id @default(uuid(7))
+  userId           String
+  organizationName String
+  professionalTitle String
+  licenseNumber    String?
+  details          String
+  contactEmail     String?
+  contactPhone     String?
+  status           ApprovalStatus    @default(PENDING)
+  reviewerId       String?
+  reviewNote       String?
+  decidedAt        DateTime?
+  createdAt        DateTime          @default(now())
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([userId])
+  @@map("professional_applications")
+}
+
+// ───────────────────────── Learning content ─────────────────────────
+
+model ContentCategory {
+  id          String    @id @default(uuid(7))
+  slug        String    @unique
+  name        String
+  description String?
+  sortOrder   Int       @default(0)
+  articles    Article[]
+  posts       CommunityPost[]
+
+  @@map("content_categories")
+}
+
+model Article {
+  id                 String          @id @default(uuid(7))
+  slug               String          @unique
+  language           Language
+  categoryId         String
+  translationKey     String?
+  isFeatured         Boolean         @default(false)
+  offlineEligible    Boolean         @default(false)
+  publishedVersionId String?         @unique
+  createdById        String
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  category           ContentCategory @relation(fields: [categoryId], references: [id])
+  publishedVersion   ArticleVersion? @relation("PublishedVersion", fields: [publishedVersionId], references: [id], onDelete: SetNull)
+  versions           ArticleVersion[] @relation("AllVersions")
+  savedBy            SavedArticle[]
+
+  @@index([categoryId, language])
+  @@index([language])
+  @@index([translationKey])
+  @@index([isFeatured])
+  @@map("articles")
+}
+
+model ArticleVersion {
+  id            String        @id @default(uuid(7))
+  articleId     String
+  version       Int
+  status        ContentStatus @default(DRAFT)
+  title         String
+  summary       String
+  body          String
+  ussdSummary   String?
+  minAgeBand    AgeBand
+  maxAgeBand    AgeBand
+  coverMediaId  String?
+  audioMediaId  String?
+  changeNote    String?
+  createdById   String
+  reviewerId    String?
+  reviewedAt    DateTime?
+  reviewNote    String?
+  publishedAt   DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  article       Article       @relation("AllVersions", fields: [articleId], references: [id], onDelete: Cascade)
+  publishedFor  Article?      @relation("PublishedVersion")
+  coverMedia    MediaAsset?   @relation("ArticleCover", fields: [coverMediaId], references: [id], onDelete: SetNull)
+  audioMedia    MediaAsset?   @relation("ArticleAudio", fields: [audioMediaId], references: [id], onDelete: SetNull)
+
+  @@unique([articleId, version])
+  @@index([status])
+  @@index([minAgeBand, maxAgeBand])
+  @@map("article_versions")
+}
+
+model SavedArticle {
+  userId    String
+  articleId String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  article   Article  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, articleId])
+  @@index([userId, createdAt])
+  @@map("saved_articles")
+}
+
+// ───────────────────────── Chatbot knowledge (RAG) ─────────────────────────
+
+model KnowledgeSource {
+  id                 String                   @id @default(uuid(7))
+  language           Language
+  createdById        String
+  publishedVersionId String?                  @unique
+  createdAt          DateTime                 @default(now())
+  publishedVersion   KnowledgeSourceVersion?  @relation("PublishedKnowledge", fields: [publishedVersionId], references: [id], onDelete: SetNull)
+  versions           KnowledgeSourceVersion[] @relation("AllKnowledge")
+
+  @@map("knowledge_sources")
+}
+
+model KnowledgeSourceVersion {
+  id           String          @id @default(uuid(7))
+  sourceId     String
+  version      Int
+  status       ContentStatus   @default(DRAFT)
+  title        String
+  organization String
+  sourceUrl    String?
+  body         String
+  minAgeBand   AgeBand
+  maxAgeBand   AgeBand
+  changeNote   String?
+  createdById  String
+  reviewerId   String?
+  reviewedAt   DateTime?
+  reviewNote   String?
+  approvedAt   DateTime?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  source       KnowledgeSource @relation("AllKnowledge", fields: [sourceId], references: [id], onDelete: Cascade)
+  publishedFor KnowledgeSource? @relation("PublishedKnowledge")
+  chunks       KnowledgeChunk[]
+
+  @@unique([sourceId, version])
+  @@index([status])
+  @@map("knowledge_source_versions")
+}
+
+model KnowledgeChunk {
+  id         String                  @id
+  versionId  String
+  chunkIndex Int
+  chunkText  String
+  embedding  Unsupported("vector(1536)")?
+  language   Language
+  ageMin     Int
+  ageMax     Int
+  active     Boolean                 @default(true)
+  createdAt  DateTime                @default(now())
+  version    KnowledgeSourceVersion  @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  @@index([versionId])
+  @@index([active, language])
+  @@map("knowledge_chunks")
+}
+
+// ───────────────────────── Referrals ─────────────────────────
+
+model ReferralService {
+  id           String      @id @default(uuid(7))
+  name         String
+  serviceType  ServiceType
+  description  String?
+  province     String?
+  district     String?
+  sector       String?
+  address      String?
+  latitude     Float?
+  longitude    Float?
+  phone        String?
+  email        String?
+  website      String?
+  hours        String?
+  languages    Language[]
+  isEmergency  Boolean     @default(false)
+  youthFriendly Boolean    @default(false)
+  active       Boolean     @default(true)
+  verifiedAt   DateTime?
+  verifiedById String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([active, serviceType])
+  @@index([district])
+  @@index([isEmergency])
+  @@map("referral_services")
+}
+
+// ───────────────────────── Channels & community ─────────────────────────
+
+model Channel {
+  id                 String             @id @default(uuid(7))
+  ownerId            String?
+  name               String
+  slug               String             @unique
+  description        String
+  channelType        ChannelType
+  verificationStatus VerificationStatus @default(UNVERIFIED)
+  minAgeBand         AgeBand            @default(AGE_10_12)
+  maxAgeBand         AgeBand            @default(AGE_25_35)
+  requiresReview     Boolean            @default(true)
+  isActive           Boolean            @default(true)
+  followersCount     Int                @default(0)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  owner              User?              @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  followers          ChannelFollow[]
+  posts              ChannelPost[]
+
+  @@index([verificationStatus, isActive])
+  @@index([ownerId])
+  @@map("channels")
+}
+
+model ChannelFollow {
+  channelId String
+  userId    String
+  createdAt DateTime @default(now())
+  channel   Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([channelId, userId])
+  @@index([userId])
+  @@map("channel_follows")
+}
+
+model ChannelPost {
+  id            String      @id @default(uuid(7))
+  channelId     String
+  authorId      String
+  text          String
+  mediaId       String?
+  status        PostStatus  @default(PENDING_REVIEW)
+  reviewedById  String?
+  reviewedAt    DateTime?
+  reviewNote    String?
+  reactionCount Int         @default(0)
+  publishedAt   DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  channel       Channel     @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  media         MediaAsset? @relation(fields: [mediaId], references: [id], onDelete: SetNull)
+
+  @@index([channelId, status, id(sort: Desc)])
+  @@index([status, createdAt])
+  @@map("channel_posts")
+}
+
+model CommunityPost {
+  id            String           @id @default(uuid(7))
+  authorId      String
+  categoryId    String?
+  text          String
+  mediaId       String?
+  status        PostStatus       @default(PUBLISHED)
+  isMinorSpace  Boolean          @default(false)
+  reactionCount Int              @default(0)
+  commentCount  Int              @default(0)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  author        User             @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  category      ContentCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  media         MediaAsset?      @relation(fields: [mediaId], references: [id], onDelete: SetNull)
+  comments      Comment[]
+
+  @@index([status, isMinorSpace, id(sort: Desc)])
+  @@index([authorId, id(sort: Desc)])
+  @@index([categoryId])
+  @@map("community_posts")
+}
+
+model Comment {
+  id            String        @id @default(uuid(7))
+  postId        String
+  authorId      String
+  parentId      String?
+  text          String
+  status        PostStatus    @default(PUBLISHED)
+  reactionCount Int           @default(0)
+  replyCount    Int           @default(0)
+  createdAt     DateTime      @default(now())
+  post          CommunityPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author        User          @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  parent        Comment?      @relation("Replies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies       Comment[]     @relation("Replies")
+
+  @@index([postId, parentId, status, id])
+  @@index([authorId])
+  @@map("comments")
+}
+
+model Reaction {
+  id         String       @id @default(uuid(7))
+  userId     String
+  targetType TargetType
+  targetId   String
+  type       ReactionType
+  createdAt  DateTime     @default(now())
+
+  @@unique([userId, targetType, targetId])
+  @@index([targetType, targetId])
+  @@map("reactions")
+}
+
+model Report {
+  id          String       @id @default(uuid(7))
+  reporterId  String
+  targetType  TargetType
+  targetId    String
+  reason      ReportReason
+  details     String?
+  status      ReportStatus @default(OPEN)
+  moderatorId String?
+  resolution  String?
+  resolvedAt  DateTime?
+  createdAt   DateTime     @default(now())
+
+  @@unique([reporterId, targetType, targetId])
+  @@index([status, createdAt])
+  @@index([targetType, targetId])
+  @@map("reports")
+}
+
+model ModerationAction {
+  id          String               @id @default(uuid(7))
+  moderatorId String?
+  targetType  TargetType
+  targetId    String
+  action      ModerationActionType
+  reason      String
+  metadata    Json?
+  createdAt   DateTime             @default(now())
+
+  @@index([targetType, targetId])
+  @@index([moderatorId])
+  @@index([createdAt])
+  @@map("moderation_actions")
+}
+
+// ───────────────────────── Media ─────────────────────────
+
+model MediaAsset {
+  id           String       @id @default(uuid(7))
+  ownerId      String
+  publicId     String       @unique
+  secureUrl    String
+  resourceType String
+  format       String?
+  bytes        Int?
+  purpose      MediaPurpose
+  status       MediaStatus  @default(ACTIVE)
+  createdAt    DateTime     @default(now())
+  owner        User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  covers       ArticleVersion[] @relation("ArticleCover")
+  audios       ArticleVersion[] @relation("ArticleAudio")
+  communityPosts CommunityPost[]
+  channelPosts ChannelPost[]
+  adPlacements AdPlacement[]
+
+  @@index([ownerId])
+  @@index([status, createdAt])
+  @@map("media_assets")
+}
+
+// ───────────────────────── Analytics & chat ─────────────────────────
+
+model AnalyticsEvent {
+  id         BigInt             @id @default(autoincrement())
+  eventType  AnalyticsEventType
+  topic      String?
+  ageBand    AgeBand?
+  language   Language?
+  sessionRef String?
+  createdAt  DateTime           @default(now())
+
+  @@index([createdAt])
+  @@index([eventType, createdAt])
+  @@map("analytics_events")
+}
+
+model ChatSession {
+  id           String      @id @default(uuid(7))
+  userId       String
+  language     Language
+  safetyLevel  SafetyLevel @default(NONE)
+  messageCount Int         @default(0)
+  startedAt    DateTime    @default(now())
+  lastActiveAt DateTime    @default(now())
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages     ChatMessage[]
+
+  @@index([userId, lastActiveAt])
+  @@map("chat_sessions")
+}
+
+model ChatMessage {
+  id          String      @id @default(uuid(7))
+  sessionId   String
+  role        ChatRole
+  content     String
+  sources     Json?
+  safetyLevel SafetyLevel @default(NONE)
+  createdAt   DateTime    @default(now())
+  expiresAt   DateTime
+  session     ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, id])
+  @@index([expiresAt])
+  @@map("chat_messages")
+}
+
+model ChatFeedback {
+  id        String          @id @default(uuid(7))
+  sessionId String?
+  rating    FeedbackRating
+  reason    FeedbackReason?
+  ageBand   AgeBand?
+  language  Language?
+  createdAt DateTime        @default(now())
+
+  @@index([createdAt])
+  @@map("chat_feedback")
+}
+
+// ───────────────────────── Advertising ─────────────────────────
+
+model Advertiser {
+  id                 String             @id @default(uuid(7))
+  businessName       String
+  contactName        String?
+  contactEmail       String?
+  contactPhone       String?
+  verificationStatus VerificationStatus @default(PENDING)
+  active             Boolean            @default(true)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  placements         AdPlacement[]
+
+  @@map("advertisers")
+}
+
+model AdPlacement {
+  id              String         @id @default(uuid(7))
+  advertiserId    String
+  creativeMediaId String?
+  slot            AdSlot
+  title           String
+  text            String?
+  targetUrl       String
+  startAt         DateTime
+  endAt           DateTime
+  monthlyFee      Decimal        @default(0) @db.Decimal(12, 2)
+  currency        String         @default("RWF")
+  paymentStatus   PaymentStatus  @default(UNPAID)
+  approvalStatus  ApprovalStatus @default(PENDING)
+  active          Boolean        @default(true)
+  impressions     Int            @default(0)
+  clicks          Int            @default(0)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  advertiser      Advertiser     @relation(fields: [advertiserId], references: [id], onDelete: Cascade)
+  creative        MediaAsset?    @relation(fields: [creativeMediaId], references: [id], onDelete: SetNull)
+
+  @@index([slot, approvalStatus, active, startAt, endAt])
+  @@index([advertiserId])
+  @@map("ad_placements")
+}
+
+// ───────────────────────── Administration ─────────────────────────
+
+model AuditLog {
+  id         String   @id @default(uuid(7))
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([actorId, createdAt])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model SystemSetting {
+  key       String   @id
+  value     Json
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+
+  @@map("system_settings")
+}
